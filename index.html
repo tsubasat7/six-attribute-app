@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>運命の六属性診断</title>
+  <meta name="description" content="六属性診断（PWA版）" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>運命の六属性診断</h1>
+  </header>
+
+  <main>
+    <section class="card">
+      <label>生年月日</label>
+      <input id="dob" type="date" />
+
+      <label>手相の型</label>
+      <select id="palm">
+        <option value="masuke">マスカケ</option>
+        <option value="support">支援型</option>
+        <option value="dialog">対話型</option>
+        <option value="late">晩成型</option>
+      </select>
+
+      <button id="btnRun">診断する</button>
+    </section>
+
+    <section class="card">
+      <h2>診断結果（占い師用）</h2>
+      <div id="resultAdmin"></div>
+    </section>
+
+    <section class="card">
+      <h2>来客向け要約</h2>
+      <div id="resultGuest"></div>
+    </section>
+  </main>
+
+  <footer>
+    バージョン 1.0 — PWA
+  </footer>
+
+  <script>
+    // 簡易ロジック（サンプル）
+    const attributes = ["木","火","土","金","水","風"];
+
+    function calcMei(dob) {
+      const d = new Date(dob);
+      if (isNaN(d)) return null;
+      const s = String(d.getFullYear()).split('').reduce((a, b) => a + Number(b), 0);
+      return (s % 60) || 60;
+    }
+
+    function pickAttribute(mei) {
+      return attributes[mei % attributes.length];
+    }
+
+    function run() {
+      const dob = document.getElementById("dob").value;
+      const palm = document.getElementById("palm").value;
+      const adminEl = document.getElementById("resultAdmin");
+      const guestEl = document.getElementById("resultGuest");
+
+      const mei = calcMei(dob);
+      if (mei === null) {
+        adminEl.innerText = "正しい生年月日を入力してください。";
+        return;
+      }
+
+      const attr = pickAttribute(mei);
+      const story = `命数: ${mei}\n属性: ${attr}\n手相: ${palm}\n未来には小さな変化がきっかけになるでしょう。`;
+
+      adminEl.innerText = story;
+      guestEl.innerText = `あなたの属性は「${attr}」。運勢のきっかけがすぐに訪れそうです。`;
+    }
+
+    document.getElementById("btnRun").addEventListener("click", run);
+  </script>
+</body>
+</html>
