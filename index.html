@@ -4,81 +4,291 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>運命の六属性診断</title>
-  <meta name="description" content="六属性診断（PWA版）" />
+  <meta name="description" content="六属性診断（占い師向けPWA）" />
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <h1>運命の六属性診断</h1>
+  <header class="topbar">
+    <div class="wrap">
+      <h1>運命の六属性診断</h1>
+      <div class="actions">
+        <button id="btnMode">来客画面へ</button>
+      </div>
+    </div>
   </header>
 
-  <main>
-    <section class="card">
-      <label>生年月日</label>
-      <input id="dob" type="date" />
+  <main class="wrap">
+    <!-- TOP / 入力 -->
+    <section id="screen-top" class="card">
+      <h2>診断スタート</h2>
+      <div class="row">
+        <label>来訪者名（任意）<input id="inputName" placeholder="非表示/管理用" /></label>
+        <label>生年月日<input id="inputDOB" type="date" /></label>
+      </div>
+      <div class="row">
+        <label>性別
+          <select id="inputSex"><option value="X">指定なし</option><option value="F">女性</option><option value="M">男性</option></select>
+        </label>
+        <label>家族構造
+          <select id="inputFamily">
+            <option value="single">単身</option>
+            <option value="parent_child">親子</option>
+            <option value="couple">夫婦</option>
+            <option value="extended">大家族</option>
+          </select>
+        </label>
+      </div>
 
-      <label>手相の型</label>
-      <select id="palm">
-        <option value="masuke">マスカケ</option>
-        <option value="support">支援型</option>
-        <option value="dialog">対話型</option>
-        <option value="late">晩成型</option>
-      </select>
+      <div class="row">
+        <label>手相の型
+          <select id="inputPalm">
+            <option value="masuke">マスカケ</option>
+            <option value="support">支援型</option>
+            <option value="dialog">対話型</option>
+            <option value="late">晩成型</option>
+            <option value="free">自由線</option>
+            <option value="leader">統率型</option>
+          </select>
+        </label>
+        <label>相手がいる場合は相手の生年月日（任意）<input id="inputPartnerDOB" type="date" /></label>
+      </div>
 
-      <button id="btnRun">診断する</button>
+      <div style="height:8px"></div>
+      <button id="btnRun" class="primary">診断を実行（占い師操作）</button>
     </section>
 
-    <section class="card">
-      <h2>診断結果（占い師用）</h2>
-      <div id="resultAdmin"></div>
+    <!-- 占い師向け詳細 -->
+    <section id="screen-admin" class="card hidden">
+      <h2>占い師用 詳細診断</h2>
+      <div id="adminResult" class="adminResult"></div>
+      <div class="row">
+        <button id="btnExport">診断結果をCSVで保存</button>
+        <button id="btnClear">履歴クリア</button>
+      </div>
     </section>
 
-    <section class="card">
-      <h2>来客向け要約</h2>
-      <div id="resultGuest"></div>
+    <!-- 来客向け表示 -->
+    <section id="screen-guest" class="card hidden guestCard">
+      <h2>来客向け 要約表示</h2>
+      <div id="guestResult" class="guestResult"></div>
+      <div style="height:8px"></div>
+      <div class="small">※詳細は占い師と相談ください</div>
+    </section>
+
+    <!-- 相性 -->
+    <section id="screen-compat" class="card hidden">
+      <h2>相性診断（要相手情報）</h2>
+      <div id="compatResult" class="compatResult"></div>
+    </section>
+
+    <!-- 履歴 -->
+    <section id="screen-history" class="card">
+      <h2>最近の診断（ローカル）</h2>
+      <div id="historyList"></div>
     </section>
   </main>
 
-  <footer>
-    バージョン 1.0 — PWA
+  <footer class="footer">
+    v1.0 • PWA • オフライン対応
   </footer>
 
-  <script>
-    // 簡易ロジック（サンプル）
-    const attributes = ["木","火","土","金","水","風"];
+<script>
+/* --------------- ロジック定義 --------------- */
+/* 六属性・命数・守護星座（60分類：5刻み12分類×金銀） */
+const ATTRS = ["木","火","土","金","水","風"];
+const STAR_MAP = [
+  {name:"導星座",range:[1,5],metal:"金"},
+  {name:"導星座",range:[6,10],metal:"銀"},
+  {name:"精霊座",range:[11,15],metal:"金"},
+  {name:"精霊座",range:[16,20],metal:"銀"},
+  {name:"天命座",range:[21,25],metal:"金"},
+  {name:"天命座",range:[26,30],metal:"銀"},
+  {name:"時空座",range:[31,35],metal:"金"},
+  {name:"時空座",range:[36,40],metal:"銀"},
+  {name:"変容座",range:[41,45],metal:"金"},
+  {name:"変容座",range:[46,50],metal:"銀"},
+  {name:"叡智座",range:[51,55],metal:"金"},
+  {name:"叡智座",range:[56,60],metal:"銀"}
+];
+// 手相ラベル
+const PALM_LABEL = {
+  masuke:"マスカケ",
+  support:"支援型",
+  dialog:"対話型",
+  late:"晩成型",
+  free:"自由線",
+  leader:"統率型"
+};
+// 行動タイプの簡易割当（命数→行動）
+function actionTypeFromMei(mei){
+  const n = mei % 6;
+  const map = ["自由","支援","統率","対話","晩成","創造"];
+  return map[n];
+}
 
-    function calcMei(dob) {
-      const d = new Date(dob);
-      if (isNaN(d)) return null;
-      const s = String(d.getFullYear()).split('').reduce((a, b) => a + Number(b), 0);
-      return (s % 60) || 60;
-    }
+/* 命数計算（簡易だが1940–2032年の正式表に差替可能） */
+function calcMeiFromDOB(dob){
+  if(!dob) return null;
+  const d = new Date(dob);
+  if(isNaN(d)) return null;
+  // 簡易命数: (年 + 月 + 日) の各桁合算を60で正規化 (placeholder for official table)
+  const y = d.getFullYear(), m = d.getMonth()+1, day = d.getDate();
+  let s = String(y).split('').reduce((a,b)=>a+Number(b),0) + m + day;
+  // fold into 1..60
+  s = ((s - 1) % 60) + 1;
+  return s;
+}
 
-    function pickAttribute(mei) {
-      return attributes[mei % attributes.length];
-    }
+/* 守護星座判定（命数→STAR_MAP） */
+function getGuardianStar(mei){
+  for(const s of STAR_MAP){
+    const [a,b] = s.range;
+    if(mei >= a && mei <= b) return s;
+  }
+  // fallback: map by cycles
+  const idx = Math.floor(((mei-1)/5)) % STAR_MAP.length;
+  return STAR_MAP[idx];
+}
 
-    function run() {
-      const dob = document.getElementById("dob").value;
-      const palm = document.getElementById("palm").value;
-      const adminEl = document.getElementById("resultAdmin");
-      const guestEl = document.getElementById("resultGuest");
+/* 属性選定: 命数をもとに主要属性決定（簡易） */
+function attributeFromMei(mei){
+  const idx = (mei-1) % ATTRS.length;
+  return ATTRS[idx];
+}
 
-      const mei = calcMei(dob);
-      if (mei === null) {
-        adminEl.innerText = "正しい生年月日を入力してください。";
-        return;
-      }
+/* 相性ロジック（属性 × 命数差 × 家族関係） */
+function compatibilityScore(meiA, attrA, meiB, attrB, relation){
+  // base by attribute match
+  let base = (attrA === attrB) ? 3 : ( (ATTRS.indexOf(attrA) - ATTRS.indexOf(attrB)) % 6 === 3 ? -2 : 0 );
+  // mei差補正
+  const d = Math.abs(meiA - meiB);
+  let meiAdj = d <= 5 ? 2 : d <= 10 ? 1 : 0;
+  // family boost
+  const relBoost = relation === 'parent_child' ? 1 : relation === 'couple' ? 0 : 0;
+  // palm synergy (small)
+  const palmBoost = 0;
+  return base + meiAdj + relBoost + palmBoost;
+}
 
-      const attr = pickAttribute(mei);
-      const story = `命数: ${mei}\n属性: ${attr}\n手相: ${palm}\n未来には小さな変化がきっかけになるでしょう。`;
+/* ストーリージェネレータ（過去の言い当て） */
+function makePastStory(mei, attr, palm, family){
+  const lines = [];
+  lines.push(`幼少期に「${attr}」の気質が出やすく、その特性が根付きました。`);
+  if(palm === 'masuke') lines.push("幼少期から孤高の瞬間があり、それが今の芯になっています。");
+  if(family === 'parent_child') lines.push("家庭内で役割を早く学んだ経験が影響しています。");
+  lines.push("過去に小さな決断が今に繋がっているはずです。");
+  return lines.join("\\n");
+}
 
-      adminEl.innerText = story;
-      guestEl.innerText = `あなたの属性は「${attr}」。運勢のきっかけがすぐに訪れそうです。`;
-    }
+/* result formatter (admin & guest) */
+function formatAdmin(detail){
+  return `
+    <div><strong>名前：</strong>${detail.name||'—'}</div>
+    <div><strong>命数：</strong>${detail.mei}</div>
+    <div><strong>属性：</strong>${detail.attribute}</div>
+    <div><strong>守護星座：</strong>${detail.star.name}（${detail.star.metal}）</div>
+    <div><strong>手相：</strong>${PALM_LABEL[detail.palm]}</div>
+    <div><strong>行動タイプ：</strong>${detail.action}</div>
+    <hr/>
+    <pre>${detail.story}</pre>
+  `;
+}
+function formatGuest(detail){
+  return `
+    <div class="guestHead">あなたの属性は <strong>${detail.attribute}</strong></div>
+    <div>核心：${detail.short}</div>
+    <div>運のポイント：小さな変化を大切に</div>
+  `;
+}
 
-    document.getElementById("btnRun").addEventListener("click", run);
-  </script>
+/* --------------- UI制御 --------------- */
+const el = id => document.getElementById(id);
+function show(id){ document.querySelectorAll('main .card').forEach(c=>c.classList.add('hidden')); el(id).classList.remove('hidden'); }
+function saveHistory(obj){
+  const arr = JSON.parse(localStorage.getItem('sa_logs')||'[]');
+  arr.unshift(obj);
+  localStorage.setItem('sa_logs', JSON.stringify(arr.slice(0,200)));
+  refreshHistory();
+}
+function refreshHistory(){
+  const list = JSON.parse(localStorage.getItem('sa_logs')||'[]');
+  const container = el('historyList');
+  if(!list.length){ container.innerHTML = '<div class="small">履歴はありません</div>'; return; }
+  container.innerHTML = list.map(it=>`<div class="histCard"><div><strong>${it.name||'非表示'}</strong> ${it.mei} / ${it.attribute} <span class="small">${new Date(it.timestamp).toLocaleString()}</span></div></div>`).join('');
+}
+
+/* main run */
+el('btnRun').addEventListener('click', ()=>{
+  const name = el('inputName').value.trim();
+  const dob = el('inputDOB').value;
+  const sex = el('inputSex').value;
+  const family = el('inputFamily').value;
+  const palm = el('inputPalm').value;
+  if(!dob){ alert('生年月日を入力してください'); return; }
+  const mei = calcMeiFromDOB(dob);
+  const attr = attributeFromMei(mei);
+  const star = getGuardianStar(mei);
+  const action = actionTypeFromMei(mei);
+  const story = makePastStory(mei, attr, palm, family);
+  const detail = {
+    name, dob, sex, family, palm, mei, attribute:attr, star, action,
+    story, short: `${attr}の傾向が強いタイプです。`, timestamp: new Date().toISOString()
+  };
+  // admin view
+  el('adminResult').innerHTML = formatAdmin(detail);
+  // guest summary
+  el('guestResult').innerHTML = formatGuest(detail);
+  // compatibility if partner provided
+  const partnerDOB = el('inputPartnerDOB').value;
+  if(partnerDOB){
+    const pmei = calcMeiFromDOB(partnerDOB);
+    const pattr = attributeFromMei(pmei);
+    const score = compatibilityScore(mei, attr, pmei, pattr, family);
+    el('compatResult').innerHTML = `<div>相性スコア: <strong>${score}</strong></div><div>相手属性: ${pattr}</div>`;
+    show('screen-compat');
+  } else {
+    show('screen-admin');
+  }
+  saveHistory(detail);
+});
+
+/* guest/admin toggle button */
+let guestMode = false;
+el('btnMode').addEventListener('click', ()=>{
+  guestMode = !guestMode;
+  if(guestMode){
+    el('btnMode').innerText = '占い師画面へ';
+    show('screen-guest');
+  } else {
+    el('btnMode').innerText = '来客画面へ';
+    show('screen-admin');
+  }
+});
+
+/* export and history */
+el('btnExport').addEventListener('click', ()=>{
+  const arr = JSON.parse(localStorage.getItem('sa_logs')||'[]');
+  if(!arr.length){ alert('履歴がありません'); return; }
+  const csv = arr.map(r=>[r.timestamp,r.name,r.dob,r.mei,r.attribute,r.palm].join(',')).join('\\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'diagnosis_history.csv';
+  a.click();
+});
+el('btnClear').addEventListener('click', ()=>{
+  if(confirm('履歴をクリアしますか？')){ localStorage.removeItem('sa_logs'); refreshHistory(); alert('クリアしました'); }
+});
+
+/* 初期 */
+refreshHistory();
+show('screen-top');
+
+/* ServiceWorker 登録（sw.js がある場合） */
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{ console.warn('sw reg fail'); });
+}
+</script>
 </body>
 </html>
