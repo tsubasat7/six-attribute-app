@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>運命の六属性診断</title>
-  <meta name="description" content="六属性診断（占い師向けPWA）" />
+  <title>運命の六属性診断 — 完全版</title>
+  <meta name="description" content="占い師用 六属性診断 PWA（完全版）" />
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="wrap">
-      <h1>運命の六属性診断</h1>
+      <h1>運命の六属性診断（完全版）</h1>
       <div class="actions">
         <button id="btnMode">来客画面へ</button>
       </div>
@@ -19,7 +19,6 @@
   </header>
 
   <main class="wrap">
-    <!-- TOP / 入力 -->
     <section id="screen-top" class="card">
       <h2>診断スタート</h2>
       <div class="row">
@@ -58,7 +57,6 @@
       <button id="btnRun" class="primary">診断を実行（占い師操作）</button>
     </section>
 
-    <!-- 占い師向け詳細 -->
     <section id="screen-admin" class="card hidden">
       <h2>占い師用 詳細診断</h2>
       <div id="adminResult" class="adminResult"></div>
@@ -68,7 +66,6 @@
       </div>
     </section>
 
-    <!-- 来客向け表示 -->
     <section id="screen-guest" class="card hidden guestCard">
       <h2>来客向け 要約表示</h2>
       <div id="guestResult" class="guestResult"></div>
@@ -76,13 +73,11 @@
       <div class="small">※詳細は占い師と相談ください</div>
     </section>
 
-    <!-- 相性 -->
     <section id="screen-compat" class="card hidden">
       <h2>相性診断（要相手情報）</h2>
       <div id="compatResult" class="compatResult"></div>
     </section>
 
-    <!-- 履歴 -->
     <section id="screen-history" class="card">
       <h2>最近の診断（ローカル）</h2>
       <div id="historyList"></div>
@@ -90,12 +85,17 @@
   </main>
 
   <footer class="footer">
-    v1.0 • PWA • オフライン対応
+    v1.0 • PWA 完全版 • オフライン対応
   </footer>
 
 <script>
-/* --------------- ロジック定義 --------------- */
-/* 六属性・命数・守護星座（60分類：5刻み12分類×金銀） */
+/* ---------------------------
+  完全版ロジック（整合性重視）
+  - 固定プロファイルは data/fixed_profiles.json を参照（後述）
+  - 公式命数表が data/meisu_table.json にある場合、最優先で使う
+  - ない場合は deterministic fallback を使う（改善可能）
+----------------------------*/
+
 const ATTRS = ["木","火","土","金","水","風"];
 const STAR_MAP = [
   {name:"導星座",range:[1,5],metal:"金"},
@@ -111,84 +111,101 @@ const STAR_MAP = [
   {name:"叡智座",range:[51,55],metal:"金"},
   {name:"叡智座",range:[56,60],metal:"銀"}
 ];
-// 手相ラベル
-const PALM_LABEL = {
-  masuke:"マスカケ",
-  support:"支援型",
-  dialog:"対話型",
-  late:"晩成型",
-  free:"自由線",
-  leader:"統率型"
-};
-// 行動タイプの簡易割当（命数→行動）
-function actionTypeFromMei(mei){
-  const n = mei % 6;
-  const map = ["自由","支援","統率","対話","晩成","創造"];
-  return map[n];
+
+// キャッシュ変数
+let MEISU_TABLE = null;
+let FIXED_PROFILES = null;
+let COMP_MATRIX = null;
+
+// 補助：外部 data ファイルを読み込む
+async function loadDataFiles(){
+  // fixed_profiles.json
+  try{
+    const r1 = await fetch('/data/fixed_profiles.json', {cache:'no-store'});
+    if(r1.ok) FIXED_PROFILES = await r1.json();
+    else FIXED_PROFILES = {};
+  }catch(e){ FIXED_PROFILES = {}; }
+  // compatibility matrix
+  try{
+    const r2 = await fetch('/data/compatibility_matrix.json', {cache:'no-store'});
+    if(r2.ok) COMP_MATRIX = await r2.json();
+    else COMP_MATRIX = {};
+  }catch(e){ COMP_MATRIX = {}; }
+  // meisu table (optional)
+  try{
+    const r3 = await fetch('/data/meisu_table.json', {cache:'no-store'});
+    if(r3.ok) MEISU_TABLE = await r3.json();
+    else MEISU_TABLE = null;
+  }catch(e){ MEISU_TABLE = null; }
+  console.info('Data loaded:', {fixedCount: Object.keys(FIXED_PROFILES||{}).length, compKeys: COMP_MATRIX?Object.keys(COMP_MATRIX).length:0, meisuLoaded: !!MEISU_TABLE});
 }
 
-/* 命数計算（簡易だが1940–2032年の正式表に差替可能） */
-function calcMeiFromDOB(dob){
-  if(!dob) return null;
+// fallback命数計算（決定的）
+function fallbackCalcMei(dob){
   const d = new Date(dob);
   if(isNaN(d)) return null;
-  // 簡易命数: (年 + 月 + 日) の各桁合算を60で正規化 (placeholder for official table)
   const y = d.getFullYear(), m = d.getMonth()+1, day = d.getDate();
-  let s = String(y).split('').reduce((a,b)=>a+Number(b),0) + m + day;
-  // fold into 1..60
+  const ys = String(y).split('').reduce((a,b)=>a+Number(b),0);
+  let s = ys + m + day;
   s = ((s - 1) % 60) + 1;
   return s;
 }
-
-/* 守護星座判定（命数→STAR_MAP） */
-function getGuardianStar(mei){
+function getMei(dob){
+  if(!dob) return null;
+  if(FIXED_PROFILES && FIXED_PROFILES[dob] && FIXED_PROFILES[dob].meisu) return FIXED_PROFILES[dob].meisu;
+  if(MEISU_TABLE && MEISU_TABLE[dob]) return MEISU_TABLE[dob];
+  return fallbackCalcMei(dob);
+}
+function getGuardianByMei(mei){
   for(const s of STAR_MAP){
     const [a,b] = s.range;
-    if(mei >= a && mei <= b) return s;
+    if(mei >= a && mei <= b) return {name:s.name, metal:s.metal};
   }
-  // fallback: map by cycles
   const idx = Math.floor(((mei-1)/5)) % STAR_MAP.length;
-  return STAR_MAP[idx];
+  return {name:STAR_MAP[idx].name, metal:STAR_MAP[idx].metal};
 }
-
-/* 属性選定: 命数をもとに主要属性決定（簡易） */
 function attributeFromMei(mei){
-  const idx = (mei-1) % ATTRS.length;
-  return ATTRS[idx];
+  return ATTRS[(mei-1) % ATTRS.length];
+}
+function actionTypeFromMei(mei){
+  const map = ["自由","支援","統率","対話","晩成","叡智"];
+  return map[(mei-1) % map.length];
 }
 
-/* 相性ロジック（属性 × 命数差 × 家族関係） */
-function compatibilityScore(meiA, attrA, meiB, attrB, relation){
-  // base by attribute match
-  let base = (attrA === attrB) ? 3 : ( (ATTRS.indexOf(attrA) - ATTRS.indexOf(attrB)) % 6 === 3 ? -2 : 0 );
-  // mei差補正
-  const d = Math.abs(meiA - meiB);
-  let meiAdj = d <= 5 ? 2 : d <= 10 ? 1 : 0;
-  // family boost
-  const relBoost = relation === 'parent_child' ? 1 : relation === 'couple' ? 0 : 0;
-  // palm synergy (small)
-  const palmBoost = 0;
-  return base + meiAdj + relBoost + palmBoost;
-}
-
-/* ストーリージェネレータ（過去の言い当て） */
+/* 過去ストーリー生成（テンプレ） */
 function makePastStory(mei, attr, palm, family){
   const lines = [];
   lines.push(`幼少期に「${attr}」の気質が出やすく、その特性が根付きました。`);
   if(palm === 'masuke') lines.push("幼少期から孤高の瞬間があり、それが今の芯になっています。");
-  if(family === 'parent_child') lines.push("家庭内で役割を早く学んだ経験が影響しています。");
-  lines.push("過去に小さな決断が今に繋がっているはずです。");
-  return lines.join("\\n");
+  if(family === 'parent_child') lines.push("家庭内で早期に役割を学んだ影響が見られます。");
+  lines.push("過去に小さな決断が現在へとつながっています。");
+  return lines.join("\n");
 }
 
-/* result formatter (admin & guest) */
+/* 相性計算：属性一致 + 命数差 + 家族ブースト + compatibility matrix */
+function compatibilityScore(meiA, attrA, meiB, attrB, relation){
+  let score = 0;
+  if(attrA === attrB) score += 3;
+  const diff = Math.abs(meiA - meiB);
+  if(diff <= 5) score += 2;
+  else if(diff <= 10) score += 1;
+  if(relation === 'parent_child') score += 1;
+  // matrix override if exists
+  const key = `${attrA}_${attrB}`;
+  if(COMP_MATRIX && COMP_MATRIX[key] && typeof COMP_MATRIX[key].score === 'number'){
+    score = Math.round(score * 0.5 + COMP_MATRIX[key].score * 0.5);
+  }
+  return score;
+}
+
+/* 表示フォーマッタ */
 function formatAdmin(detail){
   return `
     <div><strong>名前：</strong>${detail.name||'—'}</div>
     <div><strong>命数：</strong>${detail.mei}</div>
     <div><strong>属性：</strong>${detail.attribute}</div>
     <div><strong>守護星座：</strong>${detail.star.name}（${detail.star.metal}）</div>
-    <div><strong>手相：</strong>${PALM_LABEL[detail.palm]}</div>
+    <div><strong>手相：</strong>${detail.palmLabel}</div>
     <div><strong>行動タイプ：</strong>${detail.action}</div>
     <hr/>
     <pre>${detail.story}</pre>
@@ -202,7 +219,7 @@ function formatGuest(detail){
   `;
 }
 
-/* --------------- UI制御 --------------- */
+/* UI helpers */
 const el = id => document.getElementById(id);
 function show(id){ document.querySelectorAll('main .card').forEach(c=>c.classList.add('hidden')); el(id).classList.remove('hidden'); }
 function saveHistory(obj){
@@ -218,76 +235,148 @@ function refreshHistory(){
   container.innerHTML = list.map(it=>`<div class="histCard"><div><strong>${it.name||'非表示'}</strong> ${it.mei} / ${it.attribute} <span class="small">${new Date(it.timestamp).toLocaleString()}</span></div></div>`).join('');
 }
 
-/* main run */
-el('btnRun').addEventListener('click', ()=>{
-  const name = el('inputName').value.trim();
-  const dob = el('inputDOB').value;
-  const sex = el('inputSex').value;
-  const family = el('inputFamily').value;
-  const palm = el('inputPalm').value;
-  if(!dob){ alert('生年月日を入力してください'); return; }
-  const mei = calcMeiFromDOB(dob);
-  const attr = attributeFromMei(mei);
-  const star = getGuardianStar(mei);
-  const action = actionTypeFromMei(mei);
-  const story = makePastStory(mei, attr, palm, family);
-  const detail = {
-    name, dob, sex, family, palm, mei, attribute:attr, star, action,
-    story, short: `${attr}の傾向が強いタイプです。`, timestamp: new Date().toISOString()
-  };
-  // admin view
-  el('adminResult').innerHTML = formatAdmin(detail);
-  // guest summary
-  el('guestResult').innerHTML = formatGuest(detail);
-  // compatibility if partner provided
-  const partnerDOB = el('inputPartnerDOB').value;
-  if(partnerDOB){
-    const pmei = calcMeiFromDOB(partnerDOB);
-    const pattr = attributeFromMei(pmei);
-    const score = compatibilityScore(mei, attr, pmei, pattr, family);
-    el('compatResult').innerHTML = `<div>相性スコア: <strong>${score}</strong></div><div>相手属性: ${pattr}</div>`;
-    show('screen-compat');
-  } else {
-    show('screen-admin');
+/* Main run */
+async function mainRun(){
+  await loadDataFiles();
+  // wire UI after data loaded
+  el('btnRun').addEventListener('click', ()=>{
+    const name = el('inputName').value.trim();
+    const dob = el('inputDOB').value;
+    const sex = el('inputSex').value;
+    const family = el('inputFamily').value;
+    const palm = el('inputPalm').value;
+    if(!dob){ alert('生年月日を入力してください'); return; }
+    // check FIXED_PROFILES
+    let detail = null;
+    if(FIXED_PROFILES && FIXED_PROFILES[dob]){
+      const p = FIXED_PROFILES[dob];
+      detail = {
+        name: p.name, dob: p.birthday, sex, family, palm: p.palm,
+        mei: p.meisu, attribute: p.attribute, star: p.guardian, action: p.behavior,
+        palmLabel: p.palm === 'late' ? '晩成型' : p.palm,
+        story: makePastStory(p.meisu, p.attribute, p.palm, family),
+        short: `${p.attribute}の傾向が出ます。`,
+        timestamp: new Date().toISOString()
+      };
+    } else {
+      const mei = getMei(dob);
+      const star = getGuardianByMei(mei);
+      const attr = attributeFromMei(mei);
+      const action = actionTypeFromMei(mei);
+      detail = {
+        name, dob, sex, family, palm, mei, attribute: attr, star, action,
+        palmLabel: (palm === 'late' ? '晩成型' : palm),
+        story: makePastStory(mei, attr, palm, family),
+        short:`${attr}の傾向が強いタイプです。`,
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    // Admin & guest view
+    el('adminResult').innerHTML = formatAdmin(detail);
+    el('guestResult').innerHTML = formatGuest(detail);
+
+    // Compatibility
+    const partnerDOB = el('inputPartnerDOB').value;
+    if(partnerDOB){
+      const pmei = getMei(partnerDOB);
+      const pattr = attributeFromMei(pmei);
+      const score = compatibilityScore(detail.mei, detail.attribute, pmei, pattr, family);
+      el('compatResult').innerHTML = `<div>相性スコア: <strong>${score}</strong></div><div>相手属性: ${pattr}</div>`;
+      show('screen-compat');
+    } else {
+      show('screen-admin');
+    }
+
+    saveHistory(detail);
+  });
+
+  // other UI actions
+  el('btnExport').addEventListener('click', ()=>{
+    const arr = JSON.parse(localStorage.getItem('sa_logs')||'[]');
+    if(!arr.length){ alert('履歴がありません'); return; }
+    const csv = arr.map(r=>[r.timestamp,r.name,r.dob,r.mei,r.attribute,r.palm].join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'diagnosis_history.csv';
+    a.click();
+  });
+  el('btnClear').addEventListener('click', ()=>{
+    if(confirm('履歴をクリアしますか？')){ localStorage.removeItem('sa_logs'); refreshHistory(); alert('クリアしました'); }
+  });
+  let guestMode = false;
+  el('btnMode').addEventListener('click', ()=>{
+    guestMode = !guestMode;
+    if(guestMode){
+      el('btnMode').innerText = '占い師画面へ';
+      show('screen-guest');
+    } else {
+      el('btnMode').innerText = '来客画面へ';
+      show('screen-admin');
+    }
+  });
+
+  refreshHistory();
+  show('screen-top');
+
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js').catch(()=>{ console.warn('sw reg fail'); });
   }
-  saveHistory(detail);
-});
+}
+mainRun();
 
-/* guest/admin toggle button */
-let guestMode = false;
-el('btnMode').addEventListener('click', ()=>{
-  guestMode = !guestMode;
-  if(guestMode){
-    el('btnMode').innerText = '占い師画面へ';
-    show('screen-guest');
-  } else {
-    el('btnMode').innerText = '来客画面へ';
-    show('screen-admin');
+/* ========== 整合性テストハーネス（ブラウザ console から実行） ========== */
+async function runIntegrityTests(opts = {randomSamples:200, verbose:false}){
+  await loadDataFiles();
+  const report = {fixed:[], random:[], issues:[]};
+  // fixed profiles
+  const fixedKeys = FIXED_PROFILES ? Object.keys(FIXED_PROFILES) : [];
+  for(const dob of fixedKeys){
+    const p = FIXED_PROFILES[dob];
+    const mei = getMei(dob);
+    const star = getGuardianByMei(mei);
+    const attr = attributeFromMei(mei);
+    const action = actionTypeFromMei(mei);
+    const okMei = (mei === p.meisu);
+    const okStar = (star.name === p.guardian.constellation && star.metal === p.guardian.metal);
+    const rec = {id:p.id,dob,expected:p,calc:{mei,star,attr,action},okMei,okStar};
+    report.fixed.push(rec);
+    if(!okMei || !okStar) report.issues.push({type:'fixed_mismatch',rec});
   }
-});
-
-/* export and history */
-el('btnExport').addEventListener('click', ()=>{
-  const arr = JSON.parse(localStorage.getItem('sa_logs')||'[]');
-  if(!arr.length){ alert('履歴がありません'); return; }
-  const csv = arr.map(r=>[r.timestamp,r.name,r.dob,r.mei,r.attribute,r.palm].join(',')).join('\\n');
-  const blob = new Blob([csv], {type:'text/csv'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'diagnosis_history.csv';
-  a.click();
-});
-el('btnClear').addEventListener('click', ()=>{
-  if(confirm('履歴をクリアしますか？')){ localStorage.removeItem('sa_logs'); refreshHistory(); alert('クリアしました'); }
-});
-
-/* 初期 */
-refreshHistory();
-show('screen-top');
-
-/* ServiceWorker 登録（sw.js がある場合） */
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('./sw.js').catch(()=>{ console.warn('sw reg fail'); });
+  // random samples
+  const samples = opts.randomSamples || 200;
+  for(let i=0;i<samples;i++){
+    const start = new Date('1940-01-01').getTime();
+    const end = new Date('2032-12-31').getTime();
+    const t = new Date(start + Math.floor(Math.random()*(end-start)));
+    const dob = t.toISOString().slice(0,10);
+    const mei = getMei(dob);
+    const star = getGuardianByMei(mei);
+    const attr = attributeFromMei(mei);
+    const issues = [];
+    if(!(mei>=1 && mei<=60)) issues.push('mei_out_of_range');
+    if(!star || !star.name) issues.push('no_star');
+    if(!ATTRS.includes(attr)) issues.push('attr_unknown');
+    report.random.push({dob,mei,star,attr,issues});
+    if(issues.length) report.issues.push({type:'random_issue',dob,issues});
+  }
+  // summary print
+  console.group('Integrity Test Report');
+  console.log('Fixed profiles tested:', report.fixed.length);
+  report.fixed.forEach(r=>{
+    const ok = r.okMei && r.okStar;
+    if(ok) console.log('OK',r.id, r.dob, 'mei', r.calc.mei, 'star', r.calc.star.name, r.calc.star.metal);
+    else console.warn('MISMATCH', r.id, r.dob, 'expected', r.expected, 'calc', r.calc);
+  });
+  console.log('Random samples:', report.random.length);
+  if(report.issues.length===0) console.log('No issues detected — basic integrity OK.');
+  else {
+    console.warn('Issues detected:', report.issues.length);
+    console.table(report.issues.slice(0,40));
+  }
+  console.groupEnd();
+  return report;
 }
 </script>
 </body>

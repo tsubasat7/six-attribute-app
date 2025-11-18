@@ -1,0 +1,24 @@
+{
+  "1983-01-28": {
+    "id": "ehara_keisuke",
+    "name": "江原啓介",
+    "birthday": "1983-01-28",
+    "meisu": 53,
+    "guardian": {"constellation":"叡智座","metal":"金"},
+    "attribute": "叡智属性",
+    "palm": "late",
+    "behavior": "落ち着き型（分析）",
+    "role": "father"
+  },
+  "1987-02-08": {
+    "id":"ehara_mina",
+    "name":"江原美菜",
+    "birthday":"1987-02-08",
+    "meisu":25,
+    "guardian":{"constellation":"天命座","metal":"金"},
+    "attribute":"天命属性",
+    "palm":"support",
+    "behavior":"支援型",
+    "role":"mother"
+  }
+}
